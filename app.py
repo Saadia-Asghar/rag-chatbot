@@ -3,6 +3,7 @@ from pathlib import Path
 import streamlit as st
 
 from memory_service import LocalMem0
+from guardrails import block_reason, should_store_memory
 from llm_service import generate_answer
 from rag import KnowledgeBase, retrieve
 from support_history import SupportHistory, reply_for, topic_for
@@ -60,14 +61,15 @@ for role, content, _ in history.messages(conversation):
 
 message = st.chat_input("Example: I was charged twice for my bill")
 if message:
-    hits = retrieve(message, knowledge_base=knowledge_base)
-    recalled = memory.recall(user_id, message) if memory.available else []
-    response = generate_answer(message, [hit.text for hit in hits], recalled)
+    blocked = block_reason(message)
+    hits = retrieve(message, knowledge_base=knowledge_base) if not blocked else []
+    recalled = memory.recall(user_id, message) if memory.available and not blocked else []
+    response = blocked or generate_answer(message, [hit.text for hit in hits], recalled)
     _, escalate = reply_for(message, [hit.text for hit in hits])
     history.add_message(conversation, "user", message)
     history.add_open_issue(conversation, topic_for(message))
     history.add_message(conversation, "assistant", response)
-    if memory.available:
+    if memory.available and should_store_memory(message):
         memory.remember_turn(user_id, message, response)
     if escalate:
         st.session_state.escalated = True
