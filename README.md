@@ -58,3 +58,32 @@ Optional environment variables: `OLLAMA_BASE_URL`, `OLLAMA_CHAT_MODEL`, and `OLL
 ```powershell
 py -3 -m pytest -q
 ```
+
+## Hybrid RAG embeddings (local, free)
+
+QuickTalk uses Pinecone in its cloud architecture, so this demo also tests semantic retrieval without a paid cloud service. When a PDF, pasted document, or public website page is indexed, local `nomic-embed-text` creates one vector for each approximately 700-character chunk and stores it beside that chunk in SQLite. For a customer question, the app embeds the question once and combines semantic cosine similarity (75%) with keyword similarity (25%).
+
+This makes “my payment appeared twice” match a “duplicate charge” policy even when exact words differ. Retrieval is always limited to the selected workspace plus explicitly shared policies; Nayatel documents cannot be returned to a Shifa customer. If local Ollama is unavailable, the app falls back to keyword-only retrieval so human handoff still works.
+
+`nomic-embed-text` is used for both the knowledge base and Mem0. Mem0 additionally stores customer-scoped long-term-memory vectors in local Chroma. The complete conversation remains in SQLite.
+
+## Production mapping to a Pinecone/GCP architecture
+
+| Demo component | Production equivalent |
+|---|---|
+| SQLite knowledge vectors | Pinecone namespace/index filtered by `tenant_id` |
+| Ollama `nomic-embed-text` | Approved production embedding model/endpoint |
+| Local Ollama `llama3.2:1b` | Approved GCP-hosted answer LLM |
+| SQLite transcripts | Managed GCP case/audit database |
+| Local Chroma Mem0 storage | Approved persistent user-memory vector store |
+
+Keep three stores separate: RAG contains organization knowledge, Mem0 contains short customer-scoped durable facts, and the case database contains the full transcript. Never put raw chats from every customer into one shared, unfiltered vector namespace.
+
+## Cost-aware workflow
+
+- Indexing/changing a document: embed each new chunk once.
+- Each customer question: embed the question once, retrieve at most three chunks, then make one answer-LLM call.
+- New session: retrieve only the signed-in customer’s top memories.
+- End session/escalation: save one approved Mem0 memory summary, not one memory per message.
+
+For high volume, cache retrieved session memories and repeat the memory search only when the customer refers to history or changes topic.
