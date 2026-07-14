@@ -16,7 +16,7 @@ class LocalMem0:
         self.memory: Any | None = None
         self.status = "Local Mem0 has not started."
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        chat_model = os.getenv("OLLAMA_CHAT_MODEL", "llama3.1:8b")
+        chat_model = os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:1b")
         embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
         config = {
             "llm": {"provider": "ollama", "config": {"model": chat_model, "ollama_base_url": base_url}},

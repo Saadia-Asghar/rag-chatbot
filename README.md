@@ -24,7 +24,7 @@ Mem0 is semantic long-term memory, not the authoritative chat record. The human 
 2. In a terminal, pull the local models:
 
 ```powershell
-ollama pull llama3.1:8b
+ollama pull llama3.2:1b
 ollama pull nomic-embed-text
 ```
 
@@ -39,7 +39,7 @@ streamlit run app.py
 
 Open `http://localhost:8501`. All values are local by default:
 
-- `llama3.1:8b`: LLM that extracts durable memory facts for Mem0.
+- `llama3.2:1b`: lightweight local LLM that extracts durable memory facts for Mem0.
 - `nomic-embed-text`: embedding model that turns memories and queries into vectors.
 - Chroma: local vector store at `data/chroma/`.
 - SQLite: local support transcript at `data/support.sqlite3`.
