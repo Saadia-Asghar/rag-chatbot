@@ -4,6 +4,7 @@ import streamlit as st
 
 from memory_service import LocalMem0
 from guardrails import block_reason
+from kb_ingestion import IngestionError, pdf_text, webpage_text
 from llm_service import generate_answer
 from rag import KnowledgeBase, retrieve
 from support_history import SupportHistory, reply_for, topic_for
@@ -46,6 +47,22 @@ with st.sidebar:
     kb_text = st.text_area("Paste support policy / FAQ text")
     if st.button("Index knowledge document"):
         st.success(f"Indexed {knowledge_base.add(kb_source, kb_text, tenant_id)} new chunks for {tenant_id}.")
+    uploaded_pdf = st.file_uploader("Upload PDF knowledge document", type=["pdf"])
+    if st.button("Index uploaded PDF"):
+        try:
+            if uploaded_pdf is None:
+                raise IngestionError("Choose a PDF first.")
+            added = knowledge_base.add(uploaded_pdf.name, pdf_text(uploaded_pdf.getvalue()), tenant_id)
+            st.success(f"Indexed {added} PDF chunks for {tenant_id}.")
+        except IngestionError as error:
+            st.error(str(error))
+    kb_url = st.text_input("Public website link", placeholder="https://example.com/support")
+    if st.button("Index website link"):
+        try:
+            added = knowledge_base.add(kb_url, webpage_text(kb_url), tenant_id)
+            st.success(f"Indexed {added} website chunks for {tenant_id}.")
+        except IngestionError as error:
+            st.error(str(error))
     st.caption("KB is filtered by workspace. Mem0 uses workspace:customer as its user scope.")
 
 if not st.session_state.conversation:
@@ -65,7 +82,11 @@ if st.session_state.get("welcomed") != conversation:
     st.session_state.welcomed = conversation
 
 for role, content, _ in history.messages(conversation):
-    with st.chat_message(role):
+    display_role = role if role in {"user", "assistant"} else "assistant"
+    avatar = "👤" if role == "agent" else None
+    with st.chat_message(display_role, avatar=avatar):
+        if role == "agent":
+            st.caption("Human agent")
         st.write(content)
 
 message = st.chat_input("Example: I was charged twice for my bill")
@@ -98,7 +119,20 @@ if st.session_state.get("escalated"):
         memory_status = "Saved to local Mem0 OSS (session-end summary only)."
     history.save_session_evidence(conversation, user_id, tenant_id, packet, memory_status)
     st.warning("Session-end handoff packet ready. Mem0 is written once here, not per chat message.")
-    st.text_area("Human-agent context", packet, height=380)
+    bot_column, agent_column = st.columns(2)
+    with bot_column:
+        st.subheader("Bot outcome")
+        st.write("The bot has stopped and transferred the case with the specific summary shown to the agent.")
+        st.caption("Current chat is retained in SQLite; the approved session summary is also stored in local Mem0.")
+    with agent_column:
+        st.subheader("Human Agent Inbox")
+        st.caption("This is the exact context delivered at escalation.")
+        st.text_area("Specific handoff summary", packet, height=330, key="agent_packet")
+        agent_reply = st.text_input("Human agent reply to customer", key="agent_reply")
+        if st.button("Send human-agent reply", key="send_agent_reply") and agent_reply.strip():
+            history.add_message(conversation, "agent", agent_reply.strip())
+            st.success("Human-agent reply added to the case transcript.")
+            st.rerun()
 
 with st.expander("Persistent demo evidence (SQLite)"):
     st.caption("Each completed session retains its full transcript in messages and its final handoff packet in session_evidence.")
