@@ -63,6 +63,19 @@ with st.sidebar:
             st.success(f"Indexed {added} website chunks for {tenant_id}.")
         except IngestionError as error:
             st.error(str(error))
+    if st.button("Load 3 public tenant demo sources"):
+        demo_sources = [
+            ("nayatel-demo", "https://nayatel.com/faqs"),
+            ("shifa-demo", "https://www.shifa.com.pk/city/islamabad"),
+            ("general-demo", "https://support.mozilla.org/en-US/kb/what-firefox-account"),
+        ]
+        loaded = []
+        for demo_tenant, demo_url in demo_sources:
+            try:
+                loaded.append(f"{demo_tenant}: {knowledge_base.add(demo_url, webpage_text(demo_url), demo_tenant)} chunks")
+            except IngestionError as error:
+                loaded.append(f"{demo_tenant}: unavailable ({error})")
+        st.success(" | ".join(loaded))
     st.caption("KB is filtered by workspace. Mem0 uses workspace:customer as its user scope.")
 
 if not st.session_state.conversation:

@@ -87,3 +87,15 @@ Keep three stores separate: RAG contains organization knowledge, Mem0 contains s
 - End session/escalation: save one approved Mem0 memory summary, not one memory per message.
 
 For high volume, cache retrieved session memories and repeat the memory search only when the customer refers to history or changes topic.
+
+## Three public tenant test sources
+
+The sidebar button **Load 3 public tenant demo sources** loads these single, public pages into separate workspaces:
+
+| Workspace | Public source | Safe test questions |
+|---|---|---|
+| `nayatel-demo` | https://nayatel.com/faqs | “How can I pay my bill?” / “My Wi-Fi is slow.” |
+| `shifa-demo` | https://www.shifa.com.pk/city/islamabad | “What patient guide information is available?” |
+| `general-demo` | https://support.mozilla.org/en-US/kb/what-firefox-account | “What is a Firefox account?” |
+
+Use the same customer wording in each workspace, then open **Last RAG retrieval (test evidence)**. The retrieved sources must belong only to the active workspace. The Shifa source is only a public information/tenant-isolation test: this demo must not diagnose, triage, or make medical decisions.
