@@ -43,9 +43,10 @@ class LocalMem0:
         response = self.memory.search(query, filters={"user_id": user_id}, top_k=3)
         return [str(row["memory"]) for row in response.get("results", []) if row.get("memory")]
 
-    def remember_turn(self, user_id: str, customer_message: str, bot_message: str) -> None:
+    def remember_session(self, user_id: str, handoff_summary: str) -> None:
+        """One end-of-session write: avoids an LLM/embed call for every message."""
         if self.memory and user_id.strip():
             self.memory.add(
-                [{"role": "user", "content": customer_message}, {"role": "assistant", "content": bot_message}],
+                [{"role": "user", "content": handoff_summary}],
                 user_id=user_id,
             )

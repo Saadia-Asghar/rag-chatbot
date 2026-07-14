@@ -39,26 +39,29 @@ class KnowledgeBase:
     """Shared support documents; deliberately separate from user memory."""
     def __init__(self, db_path: str) -> None:
         self.db = sqlite3.connect(db_path, check_same_thread=False)
-        self.db.execute("CREATE TABLE IF NOT EXISTS knowledge_chunks(source TEXT, content TEXT, UNIQUE(source, content))")
-        self.db.executemany("INSERT OR IGNORE INTO knowledge_chunks(source, content) VALUES (?, ?)", KNOWLEDGE)
+        self.db.execute("CREATE TABLE IF NOT EXISTS knowledge_chunks(source TEXT, content TEXT, tenant_id TEXT NOT NULL DEFAULT 'shared', UNIQUE(source, content, tenant_id))")
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(knowledge_chunks)")}
+        if "tenant_id" not in columns:
+            self.db.execute("ALTER TABLE knowledge_chunks ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'shared'")
+        self.db.executemany("INSERT OR IGNORE INTO knowledge_chunks(source, content, tenant_id) VALUES (?, ?, 'shared')", KNOWLEDGE)
         self.db.commit()
-    def add(self, source: str, text: str) -> int:
+    def add(self, source: str, text: str, tenant_id: str = "shared") -> int:
         clean = " ".join(text.split())
         if not source.strip() or not clean: return 0
         chunks = [clean[i:i+700] for i in range(0, len(clean), 700)]
         before = self.db.total_changes
-        self.db.executemany("INSERT OR IGNORE INTO knowledge_chunks(source, content) VALUES (?, ?)", [(source, chunk) for chunk in chunks])
+        self.db.executemany("INSERT OR IGNORE INTO knowledge_chunks(source, content, tenant_id) VALUES (?, ?, ?)", [(source, chunk, tenant_id) for chunk in chunks])
         self.db.commit(); return self.db.total_changes - before
-    def search(self, question: str, top_k: int = 3) -> list[RAGHit]:
-        rows = self.db.execute("SELECT source, content FROM knowledge_chunks").fetchall()
+    def search(self, question: str, top_k: int = 3, tenant_id: str = "shared") -> list[RAGHit]:
+        rows = self.db.execute("SELECT source, content FROM knowledge_chunks WHERE tenant_id IN (?, 'shared')", (tenant_id,)).fetchall()
         hits = [RAGHit(source, text, _similarity(question, text)) for source, text in rows]
         return [hit for hit in sorted(hits, key=lambda row: row.score, reverse=True)[:top_k] if hit.score > 0]
 
 
-def retrieve(question: str, top_k: int = 3, knowledge_base: KnowledgeBase | None = None) -> list[RAGHit]:
+def retrieve(question: str, top_k: int = 3, knowledge_base: KnowledgeBase | None = None, tenant_id: str = "shared") -> list[RAGHit]:
     if not question.strip() or top_k <= 0:
         return []
     if knowledge_base:
-        return knowledge_base.search(question, top_k)
+        return knowledge_base.search(question, top_k, tenant_id)
     hits = [RAGHit(source, text, _similarity(question, text)) for source, text in KNOWLEDGE]
     return [hit for hit in sorted(hits, key=lambda item: item.score, reverse=True)[:top_k] if hit.score > 0]

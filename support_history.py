@@ -18,6 +18,10 @@ class SupportHistory:
         CREATE TABLE IF NOT EXISTS conversations(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS issues(id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL, topic TEXT NOT NULL, status TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS session_evidence(
+            conversation_id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+            completed_at TEXT NOT NULL, handoff_summary TEXT NOT NULL, memory_status TEXT NOT NULL
+        );
         """)
         self.db.commit()
 
@@ -58,6 +62,23 @@ class SupportHistory:
                 f"What the bot last tried: {bot_attempt}\n"
                 f"Relevant prior memory: {' | '.join(recalled_memory or []) or 'None retrieved'}\n"
                 "Escalation reason: The request needs human review or the customer asked for an agent.\n\nFULL TRANSCRIPT\n" + rendered)
+
+    def save_session_evidence(self, conversation_id: int, user_id: str, workspace_id: str,
+                              handoff_summary: str, memory_status: str) -> None:
+        """Durable demo/audit record. Transcript remains in messages; this stores the end-state packet."""
+        self.db.execute("""
+            INSERT INTO session_evidence(conversation_id, user_id, workspace_id, completed_at, handoff_summary, memory_status)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET completed_at=excluded.completed_at,
+              handoff_summary=excluded.handoff_summary, memory_status=excluded.memory_status
+        """, (conversation_id, user_id, workspace_id, _now(), handoff_summary, memory_status))
+        self.db.commit()
+
+    def recent_evidence(self, limit: int = 10) -> list[tuple[int, str, str, str, str]]:
+        return self.db.execute("""
+            SELECT conversation_id, workspace_id, user_id, completed_at, memory_status
+            FROM session_evidence ORDER BY completed_at DESC LIMIT ?
+        """, (limit,)).fetchall()
 
 
 def topic_for(message: str) -> str:
