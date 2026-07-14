@@ -1,6 +1,6 @@
 # Local RAG Support Bot + Mem0 Open Source
 
-This project uses **only Mem0 Open Source**. It does not use `MemoryClient`, `MEM0_API_KEY`, or the Mem0 hosted platform.
+This project uses **only [Mem0 Open Source](https://github.com/mem0ai/mem0)**. It installs the official `mem0ai` package and calls its self-hosted `Memory.from_config(...)` API. It does not use `MemoryClient`, `MEM0_API_KEY`, or the Mem0 hosted platform.
 
 ## Architecture
 
