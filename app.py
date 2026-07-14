@@ -3,6 +3,7 @@ from pathlib import Path
 import streamlit as st
 
 from memory_service import LocalMem0
+from llm_service import generate_answer
 from rag import retrieve
 from support_history import SupportHistory, reply_for, topic_for
 
@@ -24,8 +25,9 @@ history, memory = st.session_state.history, st.session_state.mem0
 with st.sidebar:
     st.header("Local setup")
     st.caption(memory.status)
-    user_id = st.text_input("Authenticated customer ID", st.session_state.get("user_id", "customer-001"))
-    if st.button("Start support session", type="primary") and user_id.strip():
+    user_id = st.text_input("Customer ID (demo sign-in)", st.session_state.get("user_id", "customer-001"))
+    st.caption("Demo only: production must take this ID from real authentication.")
+    if st.button("Sign in and start support", type="primary") and user_id.strip():
         st.session_state.user_id = user_id.strip()
         st.session_state.conversation = history.start(user_id.strip())
         st.session_state.escalated = False
@@ -52,7 +54,9 @@ for role, content, _ in history.messages(conversation):
 message = st.chat_input("Example: I was charged twice for my bill")
 if message:
     hits = retrieve(message)
-    response, escalate = reply_for(message, [hit.text for hit in hits])
+    recalled = memory.recall(user_id, message) if memory.available else []
+    response = generate_answer(message, [hit.text for hit in hits], recalled)
+    _, escalate = reply_for(message, [hit.text for hit in hits])
     history.add_message(conversation, "user", message)
     history.add_open_issue(conversation, topic_for(message))
     history.add_message(conversation, "assistant", response)
@@ -72,6 +76,7 @@ with st.expander("Architecture used in this demo"):
     st.markdown("""
 **RAG:** the support policy chunks are ranked for each customer message.  
 **Mem0 OSS:** the local Ollama LLM extracts durable facts; `nomic-embed-text` embeds memory and queries; Chroma stores the vectors locally.  
+**Answer LLM:** `llama3.2:1b` receives the user message plus RAG chunks and only the signed-in user's recalled Mem0 memories.  
 **Returning customer:** `Memory.search(... filters={user_id})` retrieves only that customer's previous memories.  
 **Handoff:** SQLite keeps the whole current transcript; the human receives the complete transcript and unresolved issue summary.
 """)
