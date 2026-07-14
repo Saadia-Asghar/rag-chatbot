@@ -94,6 +94,7 @@ if message:
     blocked = block_reason(message)
     hits = retrieve(message, knowledge_base=knowledge_base, tenant_id=tenant_id) if not blocked else []
     recalled = memory.recall(scoped_user_id, message) if memory.available and not blocked else []
+    st.session_state.last_rag_retrieval = [(hit.source, round(hit.score, 3)) for hit in hits]
     response = blocked or generate_answer(message, [hit.text for hit in hits], recalled)
     _, escalate = reply_for(message, [hit.text for hit in hits])
     history.add_message(conversation, "user", message)
@@ -102,6 +103,14 @@ if message:
     if escalate:
         st.session_state.escalated = True
     st.rerun()
+
+with st.expander("Last RAG retrieval (test evidence)"):
+    st.caption("Hybrid score = 75% local embedding similarity + 25% keyword similarity. Results are workspace filtered.")
+    retrieved = st.session_state.get("last_rag_retrieval", [])
+    if retrieved:
+        st.dataframe(retrieved, column_config={0: "Knowledge source", 1: "Hybrid score"}, hide_index=True, use_container_width=True)
+    else:
+        st.info("Ask a question to see the retrieved knowledge chunks.")
 
 col1, col2 = st.columns(2)
 if col1.button("Escalate to human agent", type="primary"):
