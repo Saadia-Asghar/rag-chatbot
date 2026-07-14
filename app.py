@@ -4,7 +4,7 @@ import streamlit as st
 
 from memory_service import LocalMem0
 from llm_service import generate_answer
-from rag import retrieve
+from rag import KnowledgeBase, retrieve
 from support_history import SupportHistory, reply_for, topic_for
 
 ROOT = Path(__file__).parent
@@ -16,12 +16,14 @@ st.caption("No Mem0 Cloud API. Ollama + Mem0 OSS + local Chroma + local SQLite."
 
 if "history" not in st.session_state:
     st.session_state.history = SupportHistory(DATA / "support.sqlite3")
+if "knowledge_base" not in st.session_state:
+    st.session_state.knowledge_base = KnowledgeBase(str(DATA / "knowledge.sqlite3"))
 if "mem0" not in st.session_state:
     st.session_state.mem0 = LocalMem0(DATA)
 if "conversation" not in st.session_state:
     st.session_state.conversation = None
 
-history, memory = st.session_state.history, st.session_state.mem0
+history, memory, knowledge_base = st.session_state.history, st.session_state.mem0, st.session_state.knowledge_base
 with st.sidebar:
     st.header("Local setup")
     st.caption(memory.status)
@@ -32,6 +34,11 @@ with st.sidebar:
         st.session_state.conversation = history.start(user_id.strip())
         st.session_state.escalated = False
         st.rerun()
+    st.divider(); st.subheader("Knowledge base setup")
+    kb_source = st.text_input("Document name", "support-policy")
+    kb_text = st.text_area("Paste support policy / FAQ text")
+    if st.button("Index knowledge document"):
+        st.success(f"Indexed {knowledge_base.add(kb_source, kb_text)} new chunks.")
     st.markdown("Run locally: `ollama pull llama3.1:8b` and `ollama pull nomic-embed-text`.")
 
 if not st.session_state.conversation:
@@ -53,7 +60,7 @@ for role, content, _ in history.messages(conversation):
 
 message = st.chat_input("Example: I was charged twice for my bill")
 if message:
-    hits = retrieve(message)
+    hits = retrieve(message, knowledge_base=knowledge_base)
     recalled = memory.recall(user_id, message) if memory.available else []
     response = generate_answer(message, [hit.text for hit in hits], recalled)
     _, escalate = reply_for(message, [hit.text for hit in hits])
@@ -70,7 +77,8 @@ if st.button("Escalate to human agent", type="primary"):
     st.session_state.escalated = True
 if st.session_state.get("escalated"):
     st.warning("Handoff packet ready. It includes the full transcript, not only retrieved memory.")
-    st.text_area("Human-agent context", history.handoff(conversation, user_id), height=340)
+    handoff_memory = memory.recall(user_id, "previous support issue and unresolved customer need") if memory.available else []
+    st.text_area("Human-agent context", history.handoff(conversation, user_id, handoff_memory), height=380)
 
 with st.expander("Architecture used in this demo"):
     st.markdown("""

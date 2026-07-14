@@ -42,15 +42,22 @@ class SupportHistory:
     def messages(self, conversation_id: int) -> list[tuple[str, str, str]]:
         return self.db.execute("SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY id", (conversation_id,)).fetchall()
 
-    def handoff(self, conversation_id: int, user_id: str) -> str:
+    def handoff(self, conversation_id: int, user_id: str, recalled_memory: list[str] | None = None) -> str:
         topics = [row[0] for row in self.db.execute("SELECT DISTINCT topic FROM issues WHERE conversation_id=? AND status='open'", (conversation_id,))]
         transcript = self.messages(conversation_id)
-        latest_customer = next((content for role, content, _ in reversed(transcript) if role == "user"), "No customer request captured.")
+        customer_messages = [content for role, content, _ in transcript if role == "user"]
+        bot_messages = [content for role, content, _ in transcript if role == "assistant"]
+        latest_customer = customer_messages[-1] if customer_messages else "No customer request captured."
+        facts = " | ".join(customer_messages[-3:]) or "No facts captured."
+        bot_attempt = bot_messages[-1] if bot_messages else "No bot response captured."
         rendered = "\n".join(f"[{time}] {role.upper()}: {content}" for role, content, time in transcript)
         return ("HUMAN HANDOFF SUMMARY\n"
                 f"Customer: {user_id}\nUnresolved: {', '.join(topics) or 'Needs review'}\n"
-                f"Latest customer need: {latest_customer}\n"
-                "Bot outcome: Escalated; human review required.\n\nFULL TRANSCRIPT\n" + rendered)
+                f"Customer goal / latest need: {latest_customer}\n"
+                f"Facts supplied by customer: {facts}\n"
+                f"What the bot last tried: {bot_attempt}\n"
+                f"Relevant prior memory: {' | '.join(recalled_memory or []) or 'None retrieved'}\n"
+                "Escalation reason: The request needs human review or the customer asked for an agent.\n\nFULL TRANSCRIPT\n" + rendered)
 
 
 def topic_for(message: str) -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 
@@ -34,8 +35,30 @@ class RAGHit:
     score: float
 
 
-def retrieve(question: str, top_k: int = 3) -> list[RAGHit]:
+class KnowledgeBase:
+    """Shared support documents; deliberately separate from user memory."""
+    def __init__(self, db_path: str) -> None:
+        self.db = sqlite3.connect(db_path, check_same_thread=False)
+        self.db.execute("CREATE TABLE IF NOT EXISTS knowledge_chunks(source TEXT, content TEXT, UNIQUE(source, content))")
+        self.db.executemany("INSERT OR IGNORE INTO knowledge_chunks(source, content) VALUES (?, ?)", KNOWLEDGE)
+        self.db.commit()
+    def add(self, source: str, text: str) -> int:
+        clean = " ".join(text.split())
+        if not source.strip() or not clean: return 0
+        chunks = [clean[i:i+700] for i in range(0, len(clean), 700)]
+        before = self.db.total_changes
+        self.db.executemany("INSERT OR IGNORE INTO knowledge_chunks(source, content) VALUES (?, ?)", [(source, chunk) for chunk in chunks])
+        self.db.commit(); return self.db.total_changes - before
+    def search(self, question: str, top_k: int = 3) -> list[RAGHit]:
+        rows = self.db.execute("SELECT source, content FROM knowledge_chunks").fetchall()
+        hits = [RAGHit(source, text, _similarity(question, text)) for source, text in rows]
+        return [hit for hit in sorted(hits, key=lambda row: row.score, reverse=True)[:top_k] if hit.score > 0]
+
+
+def retrieve(question: str, top_k: int = 3, knowledge_base: KnowledgeBase | None = None) -> list[RAGHit]:
     if not question.strip() or top_k <= 0:
         return []
+    if knowledge_base:
+        return knowledge_base.search(question, top_k)
     hits = [RAGHit(source, text, _similarity(question, text)) for source, text in KNOWLEDGE]
     return [hit for hit in sorted(hits, key=lambda item: item.score, reverse=True)[:top_k] if hit.score > 0]
