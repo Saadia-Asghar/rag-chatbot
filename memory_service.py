@@ -44,9 +44,28 @@ class LocalMem0:
         return [str(row["memory"]) for row in response.get("results", []) if row.get("memory")]
 
     def remember_session(self, user_id: str, handoff_summary: str) -> None:
-        """One end-of-session write: avoids an LLM/embed call for every message."""
+        """One concise end-of-session write, invoked only by the background outbox worker."""
         if self.memory and user_id.strip():
             self.memory.add(
                 [{"role": "user", "content": handoff_summary}],
                 user_id=user_id,
             )
+
+
+def process_memory_job(data_dir: str | Path, history_path: str | Path, job_id: int) -> None:
+    """Process one durable outbox item without blocking customer or agent UI."""
+    from support_history import SupportHistory
+
+    history = SupportHistory(history_path)
+    job = history.claim_memory_job(job_id)
+    if not job:
+        return
+    _, conversation_id, user_id, _, candidate = job
+    try:
+        memory = LocalMem0(data_dir)
+        if not memory.available:
+            raise RuntimeError(memory.status)
+        memory.remember_session(user_id, candidate)
+        history.finish_memory_job(job_id, conversation_id, True)
+    except Exception as error:
+        history.finish_memory_job(job_id, conversation_id, False, str(error)[:300])

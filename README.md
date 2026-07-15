@@ -92,6 +92,12 @@ For high volume, cache retrieved session memories and repeat the memory search o
 
 On a CPU-only laptop, local embeddings can take several seconds for a new semantic query. The demo therefore uses a keyword-first cascade: clear policy-term matches return immediately; only weak/ambiguous wording uses a cached semantic embedding lookup. Duplicate-charge questions use a deterministic safe workflow and skip both the embedding and answer-LLM call. Open-ended answers are limited to two context chunks and 80 generated tokens, and Ollama keeps the answer model warm for 20 minutes.
 
+## Resilient memory flow
+
+The full transcript is never sent to Mem0. At handoff, SQLite immediately saves the transcript, agent packet, and a short redacted `SUPPORT MEMORY` candidate. A single background outbox worker later submits that concise candidate to Mem0 OSS. Returning users receive the SQLite continuity cache immediately, scoped by workspace and customer; the vector-memory job is supplementary and visible as `pending`, `processing`, `complete`, or `failed`.
+
+This prevents slow local Mem0/Ollama work from delaying the customer or human agent. Production should process the same durable outbox through a separate worker/queue and enforce timeouts, retries, monitoring, retention, and human correction/deletion of long-term memories.
+
 ## Three public tenant test sources
 
 The sidebar button **Load 3 public tenant demo sources** loads these single, public pages into separate workspaces:

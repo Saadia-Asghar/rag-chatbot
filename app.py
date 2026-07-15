@@ -1,8 +1,9 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import streamlit as st
 
-from memory_service import LocalMem0
+from memory_service import LocalMem0, process_memory_job
 from guardrails import block_reason
 from kb_ingestion import IngestionError, pdf_text, webpage_text
 from llm_service import fast_policy_answer, generate_answer
@@ -15,6 +16,12 @@ DATA.mkdir(exist_ok=True)
 st.set_page_config(page_title="QuickTalk-style Mem0 OSS demo", layout="wide")
 st.title("QuickTalk-style support demo — RAG + Mem0 OSS")
 st.caption("Local only: Ollama + Mem0 OSS + Chroma + SQLite. No cloud key.")
+
+
+@st.cache_resource
+def memory_worker() -> ThreadPoolExecutor:
+    """Single worker prevents multiple expensive local Mem0 jobs from competing for Ollama."""
+    return ThreadPoolExecutor(max_workers=1, thread_name_prefix="mem0-outbox")
 
 if "history" not in st.session_state:
     st.session_state.history = SupportHistory(DATA / "support.sqlite3")
@@ -87,10 +94,11 @@ tenant_id = st.session_state.tenant_id
 scoped_user_id = st.session_state.scoped_user_id
 st.info(f"Workspace: **{tenant_id}**  |  Department: **{st.session_state.department}**  |  Customer: **{user_id}**")
 if st.session_state.get("welcomed") != conversation:
-    past = memory.recall(scoped_user_id, "open issue previous support follow up") if memory.available else []
+    past = history.memory_context(scoped_user_id, tenant_id)
+    st.session_state.prior_memory = past
     welcome = "Welcome. How can I help today?"
     if past:
-        welcome = "Welcome back. Are you following up on a previous support issue, or is there something new I can help with?"
+        welcome = "Welcome back. I have your previous support-case context. Are you following up, or is there something new I can help with?"
     history.add_message(conversation, "assistant", welcome)
     st.session_state.welcomed = conversation
 
@@ -107,7 +115,7 @@ if message:
     blocked = block_reason(message)
     fast_answer = fast_policy_answer(message) if not blocked else None
     hits = retrieve(message, knowledge_base=knowledge_base, tenant_id=tenant_id) if not blocked and not fast_answer else []
-    recalled = memory.recall(scoped_user_id, message) if memory.available and not blocked and not fast_answer else []
+    recalled = st.session_state.get("prior_memory", []) if not blocked and not fast_answer else []
     st.session_state.last_rag_retrieval = ([(hit.source, round(hit.score, 3)) for hit in hits] if not fast_answer
                                             else [("Fast duplicate-charge workflow (no embedding/LLM call)", 1.0)])
     response = blocked or fast_answer or generate_answer(message, [hit.text for hit in hits], recalled)
@@ -133,21 +141,24 @@ if col1.button("Escalate to human agent", type="primary"):
 if col2.button("End session and prepare context"):
     st.session_state.escalated = True
 if st.session_state.get("escalated"):
-    handoff_memory = memory.recall(scoped_user_id, "previous support issue and unresolved customer need") if memory.available else []
-    packet = history.handoff(conversation, user_id, handoff_memory)
-    memory_status = "Not available; session packet retained in SQLite only."
-    if memory.available and not st.session_state.get("summary_saved"):
-        memory.remember_session(scoped_user_id, packet)
+    handoff_memory = st.session_state.get("prior_memory", [])
+    if not st.session_state.get("summary_saved"):
+        packet = history.handoff(conversation, user_id, handoff_memory)
+        candidate = history.memory_candidate(conversation, user_id, tenant_id)
+        job_id = history.enqueue_memory(conversation, scoped_user_id, tenant_id, candidate)
+        history.save_session_evidence(conversation, user_id, tenant_id, packet, "Queued for local Mem0; SQLite continuity is available immediately.")
+        memory_worker().submit(process_memory_job, DATA, DATA / "support.sqlite3", job_id)
+        st.session_state.handoff_packet = packet
+        st.session_state.memory_job_id = job_id
         st.session_state.summary_saved = True
-    if memory.available:
-        memory_status = "Saved to local Mem0 OSS (session-end summary only)."
-    history.save_session_evidence(conversation, user_id, tenant_id, packet, memory_status)
-    st.warning("Session-end handoff packet ready. Mem0 is written once here, not per chat message.")
+    packet = st.session_state.get("handoff_packet") or history.handoff(conversation, user_id, handoff_memory)
+    job_status = history.memory_job_status(conversation) or "not queued"
+    st.warning(f"Session-end handoff packet ready. SQLite context is immediate; local Mem0 job status: **{job_status}**.")
     bot_column, agent_column = st.columns(2)
     with bot_column:
         st.subheader("Bot outcome")
         st.write("The bot has stopped and transferred the case with the specific summary shown to the agent.")
-        st.caption("Current chat is retained in SQLite; the approved session summary is also stored in local Mem0.")
+        st.caption("Current chat and concise continuity memory are retained in SQLite immediately. Mem0 runs from a single background outbox worker.")
     with agent_column:
         st.subheader("Human Agent Inbox")
         st.caption("This is the exact context delivered at escalation.")
@@ -171,8 +182,8 @@ with st.expander("Persistent demo evidence (SQLite)"):
 with st.expander("Architecture used in this demo"):
     st.markdown("""
 **RAG:** the support policy chunks are ranked for each customer message.  
-**Mem0 OSS:** the local Ollama LLM extracts durable facts once at session end; `nomic-embed-text` embeds the summary; Chroma stores the vectors locally.  
-**Answer LLM:** `llama3.2:1b` receives the user message plus RAG chunks and only the signed-in user's recalled Mem0 memories.  
-**Returning customer:** `Memory.search(... filters={workspace:customer})` retrieves only that workspace's customer's previous memories.  
-**Handoff:** SQLite keeps the whole current transcript; the human receives the complete transcript and unresolved issue summary.
+**SQLite continuity cache:** returning-customer case summaries are immediately available, scoped to the signed-in workspace and customer.  
+**Mem0 OSS:** a single background outbox worker sends only a concise approved summary to local Mem0; `nomic-embed-text` stores vectors in local Chroma.  
+**Answer LLM:** `llama3.2:1b` receives the user message plus RAG chunks and cached customer context, not a full historic transcript.  
+**Handoff:** SQLite keeps the full transcript; the human receives the complete transcript and unresolved issue summary without waiting for Mem0.
 """)
