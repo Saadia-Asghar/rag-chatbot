@@ -88,6 +88,10 @@ Keep three stores separate: RAG contains organization knowledge, Mem0 contains s
 
 For high volume, cache retrieved session memories and repeat the memory search only when the customer refers to history or changes topic.
 
+### Local performance behaviour
+
+On a CPU-only laptop, local embeddings can take several seconds for a new semantic query. The demo therefore uses a keyword-first cascade: clear policy-term matches return immediately; only weak/ambiguous wording uses a cached semantic embedding lookup. Duplicate-charge questions use a deterministic safe workflow and skip both the embedding and answer-LLM call. Open-ended answers are limited to two context chunks and 80 generated tokens, and Ollama keeps the answer model warm for 20 minutes.
+
 ## Three public tenant test sources
 
 The sidebar button **Load 3 public tenant demo sources** loads these single, public pages into separate workspaces:

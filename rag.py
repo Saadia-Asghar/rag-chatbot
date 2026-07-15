@@ -9,6 +9,7 @@ import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 KNOWLEDGE = [
@@ -41,6 +42,13 @@ def _embed(texts: list[str]) -> list[list[float]]:
     """Embed locally. Empty result keeps the app usable if Ollama is offline."""
     if not texts:
         return []
+
+
+@lru_cache(maxsize=256)
+def _cached_query_embedding(question: str) -> tuple[float, ...]:
+    """Avoid repeated local embedding work for repeated support questions."""
+    vectors = _embed([question])
+    return tuple(vectors[0]) if len(vectors) == 1 else ()
     try:
         from ollama import Client
         response = Client(host=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")).embed(
@@ -98,9 +106,13 @@ class KnowledgeBase:
         if not question.strip() or top_k <= 0:
             return []
         self._backfill_missing_embeddings()
-        query_vectors = _embed([question])
-        query_vector = query_vectors[0] if len(query_vectors) == 1 else []
         rows = self.db.execute("SELECT source, content, embedding_json FROM knowledge_chunks WHERE tenant_id IN (?, 'shared')", (tenant_id,)).fetchall()
+        keyword_hits = [RAGHit(source, content, _keyword_score(question, content)) for source, content, _ in rows]
+        # Most operational questions have an exact policy term. Return those immediately;
+        # local semantic embedding is reserved for ambiguous wording and is cached thereafter.
+        if keyword_hits and max(hit.score for hit in keyword_hits) >= 0.05:
+            return [hit for hit in sorted(keyword_hits, key=lambda hit: hit.score, reverse=True) if hit.score > 0][:top_k]
+        query_vector = list(_cached_query_embedding(question))
         hits = []
         for source, content, raw_vector in rows:
             keyword = _keyword_score(question, content)

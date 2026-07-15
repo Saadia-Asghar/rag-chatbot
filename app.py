@@ -5,7 +5,7 @@ import streamlit as st
 from memory_service import LocalMem0
 from guardrails import block_reason
 from kb_ingestion import IngestionError, pdf_text, webpage_text
-from llm_service import generate_answer
+from llm_service import fast_policy_answer, generate_answer
 from rag import KnowledgeBase, retrieve
 from support_history import SupportHistory, reply_for, topic_for
 
@@ -105,10 +105,12 @@ for role, content, _ in history.messages(conversation):
 message = st.chat_input("Example: I was charged twice for my bill")
 if message:
     blocked = block_reason(message)
-    hits = retrieve(message, knowledge_base=knowledge_base, tenant_id=tenant_id) if not blocked else []
-    recalled = memory.recall(scoped_user_id, message) if memory.available and not blocked else []
-    st.session_state.last_rag_retrieval = [(hit.source, round(hit.score, 3)) for hit in hits]
-    response = blocked or generate_answer(message, [hit.text for hit in hits], recalled)
+    fast_answer = fast_policy_answer(message) if not blocked else None
+    hits = retrieve(message, knowledge_base=knowledge_base, tenant_id=tenant_id) if not blocked and not fast_answer else []
+    recalled = memory.recall(scoped_user_id, message) if memory.available and not blocked and not fast_answer else []
+    st.session_state.last_rag_retrieval = ([(hit.source, round(hit.score, 3)) for hit in hits] if not fast_answer
+                                            else [("Fast duplicate-charge workflow (no embedding/LLM call)", 1.0)])
+    response = blocked or fast_answer or generate_answer(message, [hit.text for hit in hits], recalled)
     _, escalate = reply_for(message, [hit.text for hit in hits])
     history.add_message(conversation, "user", message)
     history.add_open_issue(conversation, topic_for(message))
