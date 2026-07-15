@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import streamlit as st
 
-from memory_service import LocalMem0, process_memory_job
+from memory_service import process_memory_job
 from guardrails import block_reason
 from kb_ingestion import IngestionError, pdf_text, webpage_text
 from llm_service import fast_policy_answer, generate_answer
@@ -27,17 +27,15 @@ if "history" not in st.session_state:
     st.session_state.history = SupportHistory(DATA / "support.sqlite3")
 if "knowledge_base" not in st.session_state:
     st.session_state.knowledge_base = KnowledgeBase(str(DATA / "knowledge.sqlite3"))
-if "mem0" not in st.session_state:
-    st.session_state.mem0 = LocalMem0(DATA)
 if "conversation" not in st.session_state:
     st.session_state.conversation = None
 
-history, memory, knowledge_base = st.session_state.history, st.session_state.mem0, st.session_state.knowledge_base
+history, knowledge_base = st.session_state.history, st.session_state.knowledge_base
 with st.sidebar:
     st.header("Workspace setup")
     tenant_id = st.selectbox("Client workspace", ["nayatel-demo", "shifa-demo", "general-demo"])
     department = st.selectbox("Department", ["Billing", "Account support", "General support"])
-    st.caption(memory.status)
+    st.caption("Mem0 OSS is processed by the background outbox worker; customer chat and handoff do not wait for it.")
     user_id = st.text_input("Customer ID (demo sign-in)", st.session_state.get("user_id", "customer-001"))
     st.caption("Demo only: production must take this ID from real authentication.")
     if st.button("Sign in and start support", type="primary") and user_id.strip():
