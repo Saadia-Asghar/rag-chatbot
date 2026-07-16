@@ -19,11 +19,17 @@ class LocalMem0:
         chat_model = os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:1b")
         embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
         vector_store = os.getenv("MEM0_VECTOR_STORE", "chroma").lower()
-        if vector_store == "qdrant":
+        if vector_store in {"qdrant", "qdrant-server"}:
             vector_config = {"provider": "qdrant", "config": {
                 "collection_name": "support_memories", "host": os.getenv("QDRANT_HOST", "localhost"),
                 "port": int(os.getenv("QDRANT_PORT", "6333")), "embedding_model_dims": 768,
                 "on_disk": True,
+            }}
+        elif vector_store in {"qdrant-local", "qdrant_local"}:
+            vector_store = "qdrant-local"
+            vector_config = {"provider": "qdrant", "config": {
+                "collection_name": "support_memories", "path": str(Path(data_dir) / "qdrant"),
+                "embedding_model_dims": 768, "on_disk": True,
             }}
         else:
             vector_store = "chroma"

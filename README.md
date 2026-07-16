@@ -114,7 +114,14 @@ Each decision is stored in the `agent_feedback` audit table. When Mem0 returned 
 
 ## Free local vector-store choices
 
-The default is **Chroma**, an embedded free/open-source vector store at `data/chroma/`; no extra service is needed. For a closer production-style free alternative, this repository includes **Qdrant OSS**:
+The default is **Chroma**, an embedded free/open-source vector store at `data/chroma/`; no extra service is needed. **Embedded Qdrant OSS** is also available without Docker because `qdrant-client` is installed locally:
+
+```powershell
+$env:MEM0_VECTOR_STORE = "qdrant-local"
+streamlit run app.py --server.port 8503
+```
+
+It persists to `data/qdrant/`. For a closer production-style separate-service demonstration, this repository also includes Qdrant Docker configuration:
 
 ```powershell
 docker compose -f docker-compose.qdrant.yml up -d
@@ -122,7 +129,7 @@ $env:MEM0_VECTOR_STORE = "qdrant"
 streamlit run app.py --server.port 8503
 ```
 
-Qdrant then persists at `data/qdrant/` and serves locally on port 6333. Chroma is preferable for the laptop demo; Qdrant is preferable for demonstrating a separately managed vector service. Neither option requires a paid API key.
+The Docker Qdrant service persists at `data/qdrant/` and serves locally on port 6333. Chroma is preferable for the simplest laptop demo; embedded Qdrant proves the same vector-store engine without Docker; server Qdrant is preferable for demonstrating a separately managed vector service. Neither option requires a paid API key.
 
 ## Evaluation dataset and demo evidence
 
