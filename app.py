@@ -174,6 +174,21 @@ if st.session_state.get("escalated"):
             history.add_message(conversation, "agent", agent_reply.strip())
             st.success("Human-agent reply added to the case transcript.")
             st.rerun()
+        st.divider()
+        st.caption("Agent decision updates the approved customer memory. Use Correction when the previous case fact was wrong.")
+        outcome = st.selectbox("Case outcome", ["resolved", "unresolved", "corrected"], key="agent_outcome")
+        correction = st.text_area("Correction or final resolution note (optional)", key="agent_correction", max_chars=500)
+        if st.button("Save agent decision and update memory", key="save_agent_feedback"):
+            feedback_job = history.apply_agent_feedback(conversation, scoped_user_id, tenant_id, outcome, correction)
+            if feedback_job:
+                memory_worker().submit(process_memory_job, DATA, DATA / "support.sqlite3", feedback_job)
+                st.success("Agent decision saved. The existing Mem0 case record is queued for update; SQLite is already authoritative.")
+            else:
+                st.info("Agent decision saved to the transcript. No long-term customer case record existed to update.")
+            st.rerun()
+        prior_feedback = history.feedback_for_conversation(conversation)
+        if prior_feedback:
+            st.caption(f"Latest agent memory decision: {prior_feedback[0][0]} — {prior_feedback[0][1] or 'No extra note'}")
 
 with st.expander("Persistent demo evidence (SQLite)"):
     st.caption("Each completed session retains its full transcript in messages and its final handoff packet in session_evidence.")

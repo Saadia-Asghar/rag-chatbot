@@ -28,9 +28,21 @@ class SupportHistory:
             id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL UNIQUE,
             user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, candidate TEXT NOT NULL,
             status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+            action TEXT NOT NULL DEFAULT 'add', mem0_memory_id TEXT,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL, error_message TEXT
         );
+        CREATE TABLE IF NOT EXISTS agent_feedback(
+            id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL, user_id TEXT NOT NULL,
+            workspace_id TEXT NOT NULL, outcome TEXT NOT NULL, correction TEXT,
+            created_at TEXT NOT NULL
+        );
         """)
+        # Existing demo databases were created before lifecycle fields existed.
+        existing_columns = {row[1] for row in self.db.execute("PRAGMA table_info(memory_outbox)")}
+        if "action" not in existing_columns:
+            self.db.execute("ALTER TABLE memory_outbox ADD COLUMN action TEXT NOT NULL DEFAULT 'add'")
+        if "mem0_memory_id" not in existing_columns:
+            self.db.execute("ALTER TABLE memory_outbox ADD COLUMN mem0_memory_id TEXT")
         self.db.commit()
 
     def start(self, user_id: str) -> int:
@@ -108,7 +120,7 @@ class SupportHistory:
         self.db.commit()
         return int(self.db.execute("SELECT id FROM memory_outbox WHERE conversation_id=?", (conversation_id,)).fetchone()[0])
 
-    def claim_memory_job(self, job_id: int) -> tuple[int, int, str, str, str] | None:
+    def claim_memory_job(self, job_id: int) -> tuple[int, int, str, str, str, str, str | None] | None:
         now = _now()
         cursor = self.db.execute("""UPDATE memory_outbox SET status='processing', attempts=attempts+1, updated_at=?
             WHERE id=? AND status='pending'""", (now, job_id))
@@ -116,12 +128,15 @@ class SupportHistory:
             self.db.commit()
             return None
         self.db.commit()
-        return self.db.execute("SELECT id,conversation_id,user_id,workspace_id,candidate FROM memory_outbox WHERE id=?", (job_id,)).fetchone()
+        return self.db.execute("SELECT id,conversation_id,user_id,workspace_id,candidate,action,mem0_memory_id FROM memory_outbox WHERE id=?", (job_id,)).fetchone()
 
-    def finish_memory_job(self, job_id: int, conversation_id: int, success: bool, error_message: str | None = None) -> None:
+    def finish_memory_job(self, job_id: int, conversation_id: int, success: bool,
+                          error_message: str | None = None, mem0_memory_id: str | None = None) -> None:
         status = "complete" if success else "failed"
         message = "Saved to local Mem0 OSS asynchronously." if success else f"Mem0 job failed: {error_message or 'unknown error'}"
-        self.db.execute("UPDATE memory_outbox SET status=?,updated_at=?,error_message=? WHERE id=?", (status, _now(), error_message, job_id))
+        self.db.execute("""UPDATE memory_outbox SET status=?,updated_at=?,error_message=?,
+            mem0_memory_id=COALESCE(?, mem0_memory_id) WHERE id=?""",
+            (status, _now(), error_message, mem0_memory_id, job_id))
         self.db.execute("UPDATE session_evidence SET memory_status=? WHERE conversation_id=?", (message, conversation_id))
         self.db.commit()
 
@@ -135,6 +150,41 @@ class SupportHistory:
     def memory_job_status(self, conversation_id: int) -> str | None:
         row = self.db.execute("SELECT status FROM memory_outbox WHERE conversation_id=?", (conversation_id,)).fetchone()
         return row[0] if row else None
+
+    def apply_agent_feedback(self, conversation_id: int, user_id: str, workspace_id: str,
+                             outcome: str, correction: str = "") -> int | None:
+        """Make a human decision authoritative and queue an OSS Mem0 update.
+
+        SQLite is the source of truth.  If an OSS memory ID is available, the
+        worker updates that exact vector record rather than creating a second,
+        contradictory memory.
+        """
+        if outcome not in {"resolved", "unresolved", "corrected"}:
+            raise ValueError("Unsupported agent outcome")
+        clean_correction = " ".join(correction.split())[:500]
+        self.db.execute("INSERT INTO agent_feedback(conversation_id,user_id,workspace_id,outcome,correction,created_at) VALUES(?,?,?,?,?,?)",
+                        (conversation_id, user_id, workspace_id, outcome, clean_correction or None, _now()))
+        self.db.execute("UPDATE issues SET status=? WHERE conversation_id=?", ("resolved" if outcome == "resolved" else "open", conversation_id))
+        row = self.db.execute("SELECT candidate,mem0_memory_id FROM memory_outbox WHERE conversation_id=?", (conversation_id,)).fetchone()
+        if not row:
+            self.db.commit()
+            return None
+        original, memory_id = row
+        case_status = {"resolved": "resolved by human agent", "unresolved": "still unresolved; follow up required", "corrected": "corrected by human agent"}[outcome]
+        candidate = original.split("\nAgent outcome:")[0]
+        candidate = candidate.replace("Status: needs human review", f"Status: {case_status}")
+        candidate += f"\nAgent outcome: {outcome}."
+        if clean_correction:
+            candidate += f" Correction / final note: {clean_correction}"
+        candidate = candidate[:900]
+        action = "update" if memory_id else "add"
+        self.db.execute("""UPDATE memory_outbox SET candidate=?,action=?,status='pending',error_message=NULL,updated_at=?
+            WHERE conversation_id=?""", (candidate, action, _now(), conversation_id))
+        self.db.commit()
+        return int(self.db.execute("SELECT id FROM memory_outbox WHERE conversation_id=?", (conversation_id,)).fetchone()[0])
+
+    def feedback_for_conversation(self, conversation_id: int) -> list[tuple[str, str | None, str]]:
+        return self.db.execute("SELECT outcome,correction,created_at FROM agent_feedback WHERE conversation_id=? ORDER BY id DESC", (conversation_id,)).fetchall()
 
     def save_session_evidence(self, conversation_id: int, user_id: str, workspace_id: str,
                               handoff_summary: str, memory_status: str) -> None:

@@ -102,6 +102,40 @@ RAG responses now include `Sources used:` whenever knowledge chunks were retriev
 
 This prevents slow local Mem0/Ollama work from delaying the customer or human agent. Production should process the same durable outbox through a separate worker/queue and enforce timeouts, retries, monitoring, retention, and human correction/deletion of long-term memories.
 
+## Human-agent memory lifecycle
+
+The human-agent inbox has an explicit **Case outcome** decision:
+
+- `resolved`: updates the case memory to show the case is closed.
+- `unresolved`: keeps a follow-up requirement in the customer context.
+- `corrected`: replaces an incorrect earlier case fact with the agent's correction.
+
+Each decision is stored in the `agent_feedback` audit table. When Mem0 returned a memory ID for the original record, the background worker calls the OSS `memory.update(memory_id, data, metadata)` operation on that exact vector record. It does **not** add a contradictory second memory. If no Mem0 ID exists yet, the outbox safely adds the first approved record. SQLite remains authoritative during an OSS outage, and records every correction for review.
+
+## Free local vector-store choices
+
+The default is **Chroma**, an embedded free/open-source vector store at `data/chroma/`; no extra service is needed. For a closer production-style free alternative, this repository includes **Qdrant OSS**:
+
+```powershell
+docker compose -f docker-compose.qdrant.yml up -d
+$env:MEM0_VECTOR_STORE = "qdrant"
+streamlit run app.py --server.port 8503
+```
+
+Qdrant then persists at `data/qdrant/` and serves locally on port 6333. Chroma is preferable for the laptop demo; Qdrant is preferable for demonstrating a separately managed vector service. Neither option requires a paid API key.
+
+## Evaluation dataset and demo evidence
+
+`eval_cases.json` contains ten repeatable support cases: normal billing, handoff quality, resolved and corrected memories, tenant/user isolation, secret and prompt-injection blocking, small-talk admission, and fast-path latency. Use it as the evidence checklist for the lead engineer.
+
+For a convincing demo, show these five flows in order:
+
+1. Load a Nayatel KB source; ask a billing question and open **Last RAG retrieval** to show source-grounding.
+2. Escalate `I was charged twice for invoice INV-42`; show the exact agent packet and full transcript.
+3. In the agent inbox mark it `corrected` with `Bank reversal, not a duplicate charge.` Show the queued/complete memory update and SQLite audit result.
+4. Sign in again as the same Nayatel customer; show the returning-user welcome and corrected case context. Then sign in as Bob or use Shifa workspace to show no leakage.
+5. Run `py -3 -m pytest -q`; use `NEGATIVE_TESTING.md` plus `eval_cases.json` as the regression record.
+
 ## Three public tenant test sources
 
 The sidebar button **Load 3 public tenant demo sources** loads these single, public pages into separate workspaces:

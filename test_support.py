@@ -68,11 +68,30 @@ def test_mem0_write_is_exact_and_skips_llm_inference():
 
         def add(self, *args, **kwargs):
             self.calls.append((args, kwargs))
+            return {"results": [{"id": "mem-1", "event": "ADD"}]}
 
     from memory_service import LocalMem0
     adapter = LocalMem0.__new__(LocalMem0)
     adapter.memory = fake = FakeMemory()
-    adapter.remember_session("nayatel-demo:alice", "SUPPORT MEMORY", {"workspace_id": "nayatel-demo"})
+    memory_id = adapter.remember_session("nayatel-demo:alice", "SUPPORT MEMORY", {"workspace_id": "nayatel-demo"})
     _, kwargs = fake.calls[0]
     assert kwargs["infer"] is False
     assert kwargs["metadata"]["workspace_id"] == "nayatel-demo"
+    assert memory_id == "mem-1"
+
+
+def test_agent_correction_requeues_an_update_instead_of_another_case(tmp_path):
+    history = SupportHistory(tmp_path / "support.sqlite3")
+    conversation = history.start("nayatel-demo:alice")
+    history.add_message(conversation, "user", "My invoice INV-42 has a duplicate charge")
+    candidate = history.memory_candidate(conversation, "alice", "nayatel-demo")
+    assert candidate
+    job = history.enqueue_memory(conversation, "nayatel-demo:alice", "nayatel-demo", candidate)
+    history.claim_memory_job(job)
+    history.finish_memory_job(job, conversation, True, mem0_memory_id="mem-42")
+
+    feedback_job = history.apply_agent_feedback(conversation, "nayatel-demo:alice", "nayatel-demo", "corrected", "Bank reversal, not a duplicate charge.")
+    assert feedback_job == job
+    claimed = history.claim_memory_job(job)
+    assert claimed and claimed[5:7] == ("update", "mem-42")
+    assert "Bank reversal" in claimed[4]
