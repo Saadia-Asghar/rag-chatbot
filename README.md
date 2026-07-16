@@ -2,6 +2,8 @@
 
 This project uses **only [Mem0 Open Source](https://github.com/mem0ai/mem0)**. It installs the official `mem0ai` package and calls its self-hosted `Memory.from_config(...)` API. It does not use `MemoryClient`, `MEM0_API_KEY`, or the Mem0 hosted platform.
 
+**New to RAG, agents, and memory?** Start with [LEARNING_GUIDE.md](LEARNING_GUIDE.md). It explains every component, shows the demo flow, and includes free learning/certificate links.
+
 ## Architecture
 
 ```text
