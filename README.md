@@ -96,6 +96,10 @@ On a CPU-only laptop, local embeddings can take several seconds for a new semant
 
 The full transcript is never sent to Mem0. At handoff, SQLite immediately saves the transcript, agent packet, and a short redacted `SUPPORT MEMORY` candidate. A single background outbox worker later submits that concise candidate to Mem0 OSS. Returning users receive the SQLite continuity cache immediately, scoped by workspace and customer; the vector-memory job is supplementary and visible as `pending`, `processing`, `complete`, or `failed`.
 
+The candidate is already created and safety-filtered by application code, so the worker calls Mem0 with `infer=False`. This avoids a second local LLM extraction pass; Mem0 stores the approved candidate exactly and creates its vector representation. Each stored record includes workspace, record type, and review-required metadata.
+
+RAG responses now include `Sources used:` whenever knowledge chunks were retrieved, so users and agents can inspect the grounding source instead of treating model text as an authority.
+
 This prevents slow local Mem0/Ollama work from delaying the customer or human agent. Production should process the same durable outbox through a separate worker/queue and enforce timeouts, retries, monitoring, retention, and human correction/deletion of long-term memories.
 
 ## Three public tenant test sources

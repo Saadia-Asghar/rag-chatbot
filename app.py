@@ -117,6 +117,9 @@ if message:
     st.session_state.last_rag_retrieval = ([(hit.source, round(hit.score, 3)) for hit in hits] if not fast_answer
                                             else [("Fast duplicate-charge workflow (no embedding/LLM call)", 1.0)])
     response = blocked or fast_answer or generate_answer(message, [hit.text for hit in hits], recalled)
+    if hits and not blocked and not fast_answer:
+        sources = ", ".join(dict.fromkeys(hit.source for hit in hits))
+        response += f"\n\nSources used: {sources}"
     _, escalate = reply_for(message, [hit.text for hit in hits])
     history.add_message(conversation, "user", message)
     history.add_open_issue(conversation, topic_for(message))
@@ -143,14 +146,19 @@ if st.session_state.get("escalated"):
     if not st.session_state.get("summary_saved"):
         packet = history.handoff(conversation, user_id, handoff_memory)
         candidate = history.memory_candidate(conversation, user_id, tenant_id)
-        job_id = history.enqueue_memory(conversation, scoped_user_id, tenant_id, candidate)
-        history.save_session_evidence(conversation, user_id, tenant_id, packet, "Queued for local Mem0; SQLite continuity is available immediately.")
-        memory_worker().submit(process_memory_job, DATA, DATA / "support.sqlite3", job_id)
+        if candidate:
+            job_id = history.enqueue_memory(conversation, scoped_user_id, tenant_id, candidate)
+            memory_status = "Queued for local Mem0; SQLite continuity is available immediately."
+            memory_worker().submit(process_memory_job, DATA, DATA / "support.sqlite3", job_id)
+        else:
+            job_id = None
+            memory_status = "No durable case fact was saved to long-term memory; the full transcript remains in SQLite."
+        history.save_session_evidence(conversation, user_id, tenant_id, packet, memory_status)
         st.session_state.handoff_packet = packet
         st.session_state.memory_job_id = job_id
         st.session_state.summary_saved = True
     packet = st.session_state.get("handoff_packet") or history.handoff(conversation, user_id, handoff_memory)
-    job_status = history.memory_job_status(conversation) or "not queued"
+    job_status = history.memory_job_status(conversation) or "not queued (no durable memory candidate)"
     st.warning(f"Session-end handoff packet ready. SQLite context is immediate; local Mem0 job status: **{job_status}**.")
     bot_column, agent_column = st.columns(2)
     with bot_column:

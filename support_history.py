@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from guardrails import block_reason
+from guardrails import block_reason, should_store_memory
 
 
 def _now() -> str:
@@ -71,10 +71,20 @@ class SupportHistory:
                 f"Relevant prior memory: {' | '.join(recalled_memory or []) or 'None retrieved'}\n"
                 "Escalation reason: The request needs human review or the customer asked for an agent.\n\nFULL TRANSCRIPT\n" + rendered)
 
-    def memory_candidate(self, conversation_id: int, user_id: str, workspace_id: str) -> str:
-        """Small, safe, structured record for long-term memory; never include full transcript."""
+    def memory_candidate(self, conversation_id: int, user_id: str, workspace_id: str) -> str | None:
+        """Return a small approved case record, or None when nothing durable was said.
+
+        The full transcript belongs to the handoff/audit database, not long-term
+        semantic memory.  This admission gate prevents greetings, secrets, and
+        transient small-talk from becoming a returning-customer memory.
+        """
         transcript = self.messages(conversation_id)
-        safe_customer_messages = [content for role, content, _ in transcript if role == "user" and not block_reason(content)]
+        safe_customer_messages = [
+            content for role, content, _ in transcript
+            if role == "user" and not block_reason(content) and should_store_memory(content)
+        ]
+        if not safe_customer_messages:
+            return None
         topics = [row[0] for row in self.db.execute("SELECT DISTINCT topic FROM issues WHERE conversation_id=? AND status='open'", (conversation_id,))]
         latest = safe_customer_messages[-1] if safe_customer_messages else "No safe customer fact captured."
         facts = " | ".join(safe_customer_messages[-2:]) or "No safe facts captured."

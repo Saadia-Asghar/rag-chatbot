@@ -51,3 +51,28 @@ def test_memory_outbox_is_tenant_scoped_and_excludes_secrets(tmp_path):
     assert claimed and claimed[0] == job
     history.finish_memory_job(job, conversation, True)
     assert history.memory_job_status(conversation) == "complete"
+
+
+def test_small_talk_and_secrets_do_not_create_long_term_memory(tmp_path):
+    history = SupportHistory(tmp_path / "support.sqlite3")
+    conversation = history.start("nayatel-demo:alice")
+    history.add_message(conversation, "user", "Hello there")
+    history.add_message(conversation, "user", "My password is do-not-store-this")
+    assert history.memory_candidate(conversation, "alice", "nayatel-demo") is None
+
+
+def test_mem0_write_is_exact_and_skips_llm_inference():
+    class FakeMemory:
+        def __init__(self):
+            self.calls = []
+
+        def add(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+
+    from memory_service import LocalMem0
+    adapter = LocalMem0.__new__(LocalMem0)
+    adapter.memory = fake = FakeMemory()
+    adapter.remember_session("nayatel-demo:alice", "SUPPORT MEMORY", {"workspace_id": "nayatel-demo"})
+    _, kwargs = fake.calls[0]
+    assert kwargs["infer"] is False
+    assert kwargs["metadata"]["workspace_id"] == "nayatel-demo"
